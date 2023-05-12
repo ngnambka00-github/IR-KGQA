@@ -1,0 +1,8 @@
+.idea
+LICENSE
+answer_filtering_module/MetaQA
+answer_filtering_module/MetaQA_full_1_hop_*/
+knowledge_graph_embedding_module/knowledge_graphs
+knowledge_graph_embedding_module/kg_embeddings
+QA/MetaQA
+QA/WebQuestionsSP
