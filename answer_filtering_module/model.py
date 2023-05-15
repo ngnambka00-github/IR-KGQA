@@ -2,7 +2,7 @@ import torch
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import numpy as np
 
-from utils import Attention_layer
+from answer_filtering_module.utils import Attention_layer
 
 
 class Answer_filtering_module(torch.nn.Module):

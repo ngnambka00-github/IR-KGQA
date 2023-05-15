@@ -1,8 +1,14 @@
 .idea
 LICENSE
+answer_filtering_module/__pycache__
 answer_filtering_module/MetaQA
 answer_filtering_module/MetaQA_full_1_hop_*/
+
+knowledge_graph_embedding_module/__pycache__
 knowledge_graph_embedding_module/knowledge_graphs
 knowledge_graph_embedding_module/kg_embeddings
+
 QA/MetaQA
 QA/WebQuestionsSP
+
+relational_chain_reasoning_module/__pycache__

@@ -1,8 +1,9 @@
 import torch
-from transformers import RobertaModel, RobertaTokenizer
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from transformers import RobertaModel, RobertaTokenizer
+import numpy as np
 
-from utils import ContrastiveLoss, Attention_layer
+from relational_chain_reasoning_module.utils import ContrastiveLoss, Attention_layer
 
 
 class Relational_chain_reasoning_module(torch.nn.Module):
@@ -40,23 +41,33 @@ class Relational_chain_reasoning_module(torch.nn.Module):
         :param relational_chain_idxs: A chain of relationships, each of which is represented by a subscript
         :return: Similarity
         """
-        question_text = '<s> ' + question_text + ' </s>'
-        tokenized_question = self.roberta_tokenizer.tokenize(question_text)
-        if len(tokenized_question) > self.max_sent_len:
-            padded_tokenized_question = tokenized_question[:self.max_sent_len]
-        else:
-            padded_tokenized_question = tokenized_question + ['<pad>'] * (self.max_sent_len - len(tokenized_question))
-        encoded_question = torch.tensor(
-            self.roberta_tokenizer.encode(padded_tokenized_question, add_special_tokens=False),
-            device=torch.device('cuda'))
-        unmask_count = min(self.max_sent_len, len(tokenized_question))
-        question_mask = torch.tensor([1] * unmask_count + [0] * (self.max_sent_len - unmask_count), dtype=torch.long,
-                                     device=torch.device('cuda'))
-        roberta_outputs = self.roberta_model(encoded_question, attention_mask=question_mask)[0]
+        question_masks, encoded_questions = [], []
+        for question in question_text:
+            question_text = '<s> ' + question + ' </s>'
+            tokenized_question = self.roberta_tokenizer.tokenize(question_text)
+            if len(tokenized_question) > self.max_sent_len:
+                padded_tokenized_question = tokenized_question[:self.max_sent_len]
+            else:
+                padded_tokenized_question = tokenized_question + ['<pad>'] * (
+                        self.max_sent_len - len(tokenized_question))
+            unmask_count = min(self.max_sent_len, len(tokenized_question))
+            question_mask = torch.tensor([1] * unmask_count + [0] * (self.max_sent_len - unmask_count),
+                                         dtype=torch.long, device=torch.device('cuda'))
+            encoded_question = torch.tensor(
+                self.roberta_tokenizer.encode(padded_tokenized_question, add_special_tokens=False),
+                device=torch.device('cuda'))
+            question_masks.append(question_mask)
+            encoded_questions.append(encoded_question)
+
+        encoded_questions = torch.stack(encoded_questions)
+        question_masks = torch.stack(question_masks)
+        roberta_outputs = self.roberta_model(encoded_questions, attention_mask=question_masks)[0]
         roberta_outputs = roberta_outputs.transpose(1, 0)[0]
         roberta_outputs = self.fc_dim12dim2(torch.nn.functional.relu(self.fc_bert2dim1(roberta_outputs)))
+
         embedded_chain = self.relation_embed_layer(relational_chain_idxs.unsqueeze(0))
-        packed_chain = pack_padded_sequence(embedded_chain, relation_chain_lengths, batch_first=True)
+        embedded_chain = embedded_chain.squeeze(0)
+        packed_chain = pack_padded_sequence(embedded_chain, relation_chain_lengths.cpu(), batch_first=True)
         packed_outputs, _ = self.BiLSTM(packed_chain)
         chain_outputs, _ = pad_packed_sequence(packed_outputs, batch_first=True, padding_value=0.0,
                                                total_length=max_chain_len)
@@ -67,3 +78,94 @@ class Relational_chain_reasoning_module(torch.nn.Module):
         else:
             euclidean_loss = self.loss_criterion(roberta_outputs, chain_outputs, label=label)
             return euclidean_loss
+
+
+class Answer_filtering_module(torch.nn.Module):
+    def __init__(self, entity_embeddings, embedding_dim, vocab_size, word_dim, hidden_dim, fc_hidden_dim, relation_dim,
+                 head_bn_filepath, score_bn_filepath):
+        super(Answer_filtering_module, self).__init__()
+        self.relation_dim = relation_dim * 2
+        self.loss_criterion = torch.nn.BCELoss(reduction='sum')
+
+        # hidden_dim * 2 is the BiLSTM + attention layer output
+        self.fc_lstm2hidden = torch.nn.Linear(hidden_dim * 2, fc_hidden_dim, bias=True)
+        torch.nn.init.xavier_normal_(self.fc_lstm2hidden.weight.data)
+        torch.nn.init.constant_(self.fc_lstm2hidden.bias.data, val=0.0)
+        self.fc_hidden2relation = torch.nn.Linear(fc_hidden_dim, self.relation_dim, bias=False)
+        torch.nn.init.xavier_normal_(self.fc_hidden2relation.weight.data)
+        self.entity_embedding_layer = torch.nn.Embedding.from_pretrained(torch.tensor(entity_embeddings), freeze=True)
+        self.word_embedding_layer = torch.nn.Embedding(vocab_size, word_dim)
+        self.BiLSTM = torch.nn.LSTM(embedding_dim, hidden_dim, 1, bidirectional=True, batch_first=True)
+        self.softmax_layer = torch.nn.LogSoftmax(dim=-1)
+        self.attention_layer = Attention_layer(hidden_dim=2 * hidden_dim, attention_dim=4 * hidden_dim)
+
+        self.head_bn = torch.nn.BatchNorm1d(2)
+        head_bn_params_dict = np.load(head_bn_filepath, allow_pickle=True).ravel()[0]
+        self.head_bn.weight.data = torch.tensor(head_bn_params_dict["weight"])
+        self.head_bn.bias.data = torch.tensor(head_bn_params_dict["bias"])
+        self.head_bn.running_mean.data = torch.tensor(head_bn_params_dict["running_mean"])
+        self.head_bn.running_var.data = torch.tensor(head_bn_params_dict["running_var"])
+        # for key in head_bn_params_dict:
+        #     self.head_bn[key].data = torch.tensor(head_bn_params_dict[key])
+
+        self.score_bn = torch.nn.BatchNorm1d(2)
+        score_bn_params_dict = np.load(score_bn_filepath, allow_pickle=True).ravel()[0]
+        self.score_bn.weight.data = torch.tensor(score_bn_params_dict["weight"])
+        self.score_bn.bias.data = torch.tensor(score_bn_params_dict["bias"])
+        self.score_bn.running_mean.data = torch.tensor(score_bn_params_dict["running_mean"])
+        self.score_bn.running_var.data = torch.tensor(score_bn_params_dict["running_var"])
+        # for key in score_bn_params_dict:
+        #     self.score_bn[key].data = torch.tensor(score_bn_params_dict[key])
+
+    def complex_scorer(self, head, relation):
+        head = torch.stack(list(torch.chunk(head, 2, dim=1)), dim=1)
+        head = self.head_bn(head)
+        head = head.repeat(1, 1, 2)
+        head = head.permute(1, 0, 2)
+        re_head = head[0]
+        im_head = head[1]
+        re_relation, im_relation = torch.chunk(relation, 2, dim=1)
+        re_tail, im_tail = torch.chunk(self.entity_embedding_layer.weight, 2, dim=1)
+        re_score = re_head * re_relation - im_head * im_relation
+        im_score = re_head * im_relation + im_head * re_relation
+        score = torch.stack([re_score, im_score], dim=1)
+        score = self.score_bn(score)
+        score = score.permute(1, 0, 2)
+        re_score = score[0]
+        im_score = score[1]
+        return torch.sigmoid(torch.mm(re_score, re_tail.repeat(1, 2).transpose(1, 0)) +
+                             torch.mm(im_score, im_tail.repeat(1, 2).transpose(1, 0)))
+
+    def forward(self, question, questions_length, head_entity, tail_entity, max_sent_len):
+        """
+            batch_questions_index,
+            batch_questions_length,
+            batch_head_entity,
+            batch_onehot_answers,
+            max_sent_len
+        """
+        embedded_question = self.word_embedding_layer(question.unsqueeze(0))
+        embedded_question = embedded_question.squeeze(0)
+        packed_input = pack_padded_sequence(embedded_question, questions_length.cpu(), batch_first=True)
+
+        packed_output, _ = self.BiLSTM(packed_input)
+        output, _ = pad_packed_sequence(packed_output, batch_first=True, padding_value=0.0, total_length=max_sent_len)
+        output = self.attention_layer(output.permute(1, 0, 2), questions_length)
+        output = torch.nn.functional.relu(self.fc_lstm2hidden(output))
+        relation_embedding = self.fc_hidden2relation(output)
+        pred_answers_score = self.complex_scorer(self.entity_embedding_layer(head_entity), relation_embedding)
+        loss = self.loss_criterion(pred_answers_score, tail_entity)
+        return loss
+
+    def get_ranked_top_k(self, question, questions_length, head_entity, max_sent_len, K=5):
+        embedded_question = self.word_embedding_layer(question.unsqueeze(0))
+        embedded_question = embedded_question.squeeze(0)
+        packed_input = pack_padded_sequence(embedded_question, questions_length.cpu(), batch_first=True)
+
+        packed_output, _ = self.BiLSTM(packed_input)
+        output, _ = pad_packed_sequence(packed_output, batch_first=True, padding_value=0.0, total_length=max_sent_len)
+        output = self.attention_layer(output.permute(1, 0, 2), questions_length)
+        output = torch.nn.functional.relu(self.fc_lstm2hidden(output))
+        relation_embedding = self.fc_hidden2relation(output)
+        pred_answers_score = self.complex_scorer(self.entity_embedding_layer(head_entity), relation_embedding)
+        return torch.topk(pred_answers_score, k=K, dim=-1, largest=True, sorted=True)

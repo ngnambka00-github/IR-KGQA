@@ -177,13 +177,17 @@ class DEV_MetaQADataSet(Dataset):
         # ==head entity text==
         text_head = qa_pair[0]
         heads_idx = self.entities2idx[text_head]
+
         # ==text question==
         text_q = qa_pair[1]
-        idx_q = [self.word_idx[word] for word in text_q.split()]
+        idx_q = [self.word_idx.get(word, 0) for word in text_q.split()]
+
         # ==tail entity text==
         text_tails = qa_pair[2]
         tails_idx = [self.entities2idx[tail_text] for tail_text in text_tails]
-        return idx_q, heads_idx, tails_idx, text_q
+        onehot_tail = torch.zeros(self.entities_count)
+        onehot_tail.scatter_(0, torch.tensor(tails_idx), 1)
+        return idx_q, heads_idx, onehot_tail, text_q
 
 
 class DEV_MetaQADataLoader(DataLoader):
@@ -211,5 +215,10 @@ class DEV_MetaQADataLoader(DataLoader):
             heads_idx.append(head_idx)
             tails_idxs.append(tails_idx)
             text_qs.append(text_q)
-        return torch.tensor(padded_questions, dtype=torch.long), torch.tensor(sorted_qa_pairs_len, dtype=torch.long), \
-            torch.tensor(heads_idx), torch.tensor(tails_idxs), max_sent_len, text_qs
+
+        # return values
+        result_1 = torch.tensor(padded_questions, dtype=torch.long)
+        result_2 = torch.tensor(sorted_qa_pairs_len, dtype=torch.long)
+        result_3 = torch.tensor(heads_idx)
+        result_4 = torch.stack(tails_idxs)
+        return result_1, result_2, result_3, result_4, max_sent_len, text_qs
