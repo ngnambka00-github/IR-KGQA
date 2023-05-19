@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from torch.optim.lr_scheduler import ExponentialLR
 
-from model import ComplEx_KGE
+from knowledge_graph_embedding_module.model import ComplEx_KGE
 
 
 class DataSet:
@@ -44,7 +44,7 @@ class Experiment:
     def __init__(self, input_dropout, hidden_dropout1, hidden_dropout2, learning_rate, ent_vec_dim, rel_vec_dim,
                  num_epochs, test_interval, batch_size, decay_rate, label_smoothing, dataset_name, data_dir,
                  model_dir, load_from, do_batch_norm):
-        # =======hyper-parameters===========
+        # ========== Hyper-Parameters =============
         self.input_dropout = input_dropout
         self.hidden_dropout1 = hidden_dropout1
         self.hidden_dropout2 = hidden_dropout2
@@ -57,16 +57,19 @@ class Experiment:
         self.batch_size = batch_size
         self.decay_rate = decay_rate
         self.label_smoothing = label_smoothing
-        # ========dataset stored and loaded==========
+
+        # =========== Dataset Stored and Loaded =============
         self.dataset_name = dataset_name
-        # ====KG sources====
+
+        # ======= KG Sources =======
         # before you run next statement, you should make knowledge_graphs available in root directory.
         data_path = os.path.join(data_dir, self.dataset_name)
         assert os.path.isdir(data_path)
         self.dataset = DataSet(data_dir=data_path, reverse=True)
         self.entity_idxs = {entity: i for i, entity in enumerate(self.dataset.entities)}
         self.relation_idxs = {relation: i for i, relation in enumerate(self.dataset.relations)}
-        # ====KGE model save=====
+
+        # ======= KGE Model Save ========
         model_save_dir = os.path.join(model_dir, self.dataset_name)
         if not os.path.isdir(model_save_dir):
             os.mkdir(model_save_dir)
@@ -76,12 +79,14 @@ class Experiment:
         self.final_model_save_dir = os.path.join(model_save_dir, 'final_checkpoint')
         if not os.path.isdir(self.final_model_save_dir):
             os.mkdir(self.final_model_save_dir)
-        # ======= resume training from a breakpoint =======
+
+        # ========== Resume Training From A Breakpoint ==========
         self.load_from = load_from
 
     def get_data_idxs(self, triples):
         """ A triplet of entity-relationship entity subscripts [(234,13,424),..] """
-        return [(self.entity_idxs[triple[0]], self.relation_idxs[triple[1]], self.entity_idxs[triple[2]]) for triple in triples]
+        return [(self.entity_idxs[triple[0]], self.relation_idxs[triple[1]], self.entity_idxs[triple[2]]) for triple in
+                triples]
 
     def get_hl_t(self, triples):  # h: head entity, l: relationship, t:tail entity.
         """ {(头实体下标,关系下标):[尾实体下标,尾实体下标...],others:[],...} """
@@ -146,11 +151,11 @@ class Experiment:
         self.write_embedding_files(model, model_dir)
 
     def write_vocab_files(self, model_dir):
-        with open(os.path.join(model_dir, 'idx_entities.dict'),'wt',encoding='utf-8') as out_ie, \
-                open(os.path.join(model_dir, 'entities_idx.dict'),'wt',encoding='utf-8') as out_ei:
+        with open(os.path.join(model_dir, 'idx_entities.dict'), 'wt', encoding='utf-8') as out_ie, \
+                open(os.path.join(model_dir, 'entities_idx.dict'), 'wt', encoding='utf-8') as out_ei:
             for idx, entity in enumerate(self.dataset.entities):
-                out_ie.write(str(idx)+'\t'+entity+'\n')
-                out_ei.write(entity+'\t'+str(idx)+'\n')
+                out_ie.write(str(idx) + '\t' + entity + '\n')
+                out_ei.write(entity + '\t' + str(idx) + '\n')
         with open(os.path.join(model_dir, 'idx_relations.dict'), 'wt', encoding='utf-8') as out_ir, \
                 open(os.path.join(model_dir, 'relations_idx.dict'), 'wt', encoding='utf-8') as out_ri:
             for idx, relation in enumerate(self.dataset.relations):
@@ -174,8 +179,8 @@ class Experiment:
     def train_and_eval(self):
         best_eval = [0] * 5
         train_data_idxs = self.get_data_idxs(self.dataset.train_data)
-        print(f'dataset: {self.dataset_name}, entities: {len(self.dataset.entities)}, relations: \
-        {len(self.dataset.relations)}, training data count: {len(self.dataset.train_data)}.')
+        print(f'Dataset: {self.dataset_name}, Entities: {len(self.dataset.entities)}, Relations: \
+        {len(self.dataset.relations)}, Training data count: {len(self.dataset.train_data)}.')
         model = ComplEx_KGE(self.dataset, self.ent_vec_dim, do_batch_norm=self.do_batch_norm,
                             input_dropout=self.input_dropout, hidden_dropout1=self.hidden_dropout1,
                             hidden_dropout2=self.hidden_dropout2)
@@ -186,7 +191,8 @@ class Experiment:
         scheduler = ExponentialLR(optimizer, gamma=self.decay_rate) if 1 > self.decay_rate > 0 else None
         er_vocab = self.get_hl_t(train_data_idxs)
         er_vocab_pairs = list(er_vocab.keys())
-        print("starting training...")
+
+        print("Starting Training...")
         start_train = time.time()
         for epo in range(self.num_epochs):
             epoch_idx = epo + 1
@@ -205,35 +211,38 @@ class Experiment:
                 loss.backward()
                 optimizer.step()
                 losses.append(loss.item())
-            print('epoch:', epoch_idx, 'epoch time:', time.time() - start_epoch, 'loss:', np.mean(losses))
+            print('Epoch:', epoch_idx, 'Epoch Time:', time.time() - start_epoch, 'Loss:', np.mean(losses))
+
             if epoch_idx % self.test_interval == 0:
                 model.eval()
                 with torch.no_grad():
                     start_test = time.time()
-                    print('validation results:')
+                    print('Validation Results:')
                     valid_res = self.evaluate(model, self.dataset.valid_data)  # mrr, meanrank, hitat10, hitat3, hitat1
-                    print('test results:')
+                    print('Test Results:')
                     test_res = self.evaluate(model, self.dataset.test_data)  # mrr, meanrank, hitat10, hitat3, hitat1
-                    eval_res = (np.add(test_res, valid_res))/2
+                    eval_res = (np.add(test_res, valid_res)) / 2
                     if eval_res[0] >= best_eval[0]:
                         best_eval = eval_res
-                        print(f'evaluation MRR increased, saving checkpoint to {self.best_model_save_dir}')
+                        print(f'Evaluation MRR increased, saving checkpoint to {self.best_model_save_dir}')
                         self.save_checkpoint(model, model_dir=self.best_model_save_dir)
-                        print('best model saved!')
-                        print('overall best evaluation:', best_eval)
-                    print(f'test time cost: [{time.time() - start_test}]')
+                        print('Best model saved!')
+                        print('Overall Best eEvaluation:', best_eval)
+                    print(f'Test time cost: [{time.time() - start_test}]')
             if scheduler:
                 scheduler.step(epoch=None)
-        print(f'training over, saving checkpoint to {self.final_model_save_dir}')
+        print(f'Training over, Saving checkpoint to {self.final_model_save_dir}')
         self.save_checkpoint(model, model_dir=self.final_model_save_dir)
-        print('final model saved!')
-        print(f'total time cost: [{time.time() - start_train}]')
+        print('Final model saved!')
+        print(f'Total time cost: [{time.time() - start_train}]')
 
 
 if __name__ == '__main__':
     set_fixed_seed(seed=199839)
     experiment = Experiment(num_epochs=500, test_interval=10, batch_size=128, learning_rate=0.0005, ent_vec_dim=200,
                             rel_vec_dim=200, input_dropout=0.3, hidden_dropout1=0.4, hidden_dropout2=0.5,
-                            label_smoothing=0.1, do_batch_norm=True, data_dir='./knowledge_graphs',
-                            model_dir='./kg_embeddings', dataset_name='MetaQA', load_from='', decay_rate=1.0)
+                            label_smoothing=0.1, do_batch_norm=True,
+                            data_dir='knowledge_graph_embedding_module/knowledge_graphs',
+                            model_dir='knowledge_graph_embedding_module/kg_embeddings',
+                            dataset_name='MetaQA', load_from='', decay_rate=0.95)
     experiment.train_and_eval()

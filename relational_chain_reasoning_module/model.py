@@ -41,27 +41,10 @@ class Relational_chain_reasoning_module(torch.nn.Module):
         :param relational_chain_idxs: A chain of relationships, each of which is represented by a subscript
         :return: Similarity
         """
-        question_masks, encoded_questions = [], []
-        for question in question_text:
-            question_text = '<s> ' + question + ' </s>'
-            tokenized_question = self.roberta_tokenizer.tokenize(question_text)
-            if len(tokenized_question) > self.max_sent_len:
-                padded_tokenized_question = tokenized_question[:self.max_sent_len]
-            else:
-                padded_tokenized_question = tokenized_question + ['<pad>'] * (
-                        self.max_sent_len - len(tokenized_question))
-            unmask_count = min(self.max_sent_len, len(tokenized_question))
-            question_mask = torch.tensor([1] * unmask_count + [0] * (self.max_sent_len - unmask_count),
-                                         dtype=torch.long, device=torch.device('cuda'))
-            encoded_question = torch.tensor(
-                self.roberta_tokenizer.encode(padded_tokenized_question, add_special_tokens=False),
-                device=torch.device('cuda'))
-            question_masks.append(question_mask)
-            encoded_questions.append(encoded_question)
-
-        encoded_questions = torch.stack(encoded_questions)
-        question_masks = torch.stack(question_masks)
-        roberta_outputs = self.roberta_model(encoded_questions, attention_mask=question_masks)[0]
+        encoded_questions = self.roberta_tokenizer(question_text, add_special_tokens=True, max_length=self.max_sent_len,
+                                                   padding="max_length", truncation=True, return_attention_mask=True,
+                                                   return_tensors="pt")
+        roberta_outputs = self.roberta_model(encoded_questions.input_ids.cuda(), attention_mask=encoded_questions.attention_mask.cuda())[0]
         roberta_outputs = roberta_outputs.transpose(1, 0)[0]
         roberta_outputs = self.fc_dim12dim2(torch.nn.functional.relu(self.fc_bert2dim1(roberta_outputs)))
 
@@ -69,6 +52,9 @@ class Relational_chain_reasoning_module(torch.nn.Module):
         embedded_chain = embedded_chain.squeeze(0)
         packed_chain = pack_padded_sequence(embedded_chain, relation_chain_lengths.cpu(), batch_first=True)
         packed_outputs, _ = self.BiLSTM(packed_chain)
+        # có customize ở đây nữa -> dòng 2, tham số total_length
+        if max_chain_len > 8:
+            max_chain_len = 8
         chain_outputs, _ = pad_packed_sequence(packed_outputs, batch_first=True, padding_value=0.0,
                                                total_length=max_chain_len)
         chain_outputs = self.attention_layer(chain_outputs.permute(1, 0, 2), relation_chain_lengths)

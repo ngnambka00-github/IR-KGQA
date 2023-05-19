@@ -105,19 +105,12 @@ class MetaQADataLoader(DataLoader):
         padded_questions = []  # torch.zeros(batch_size, max_sent_len, dtype=torch.long)
         head_idxs = []
         onehot_tails = []
-
         for idx_q, head_idx, onehot_tail in sorted_qa_pairs:
             padded_questions.append(idx_q + [0] * (max_sent_len - len(idx_q)))
             head_idxs.append(head_idx)
             onehot_tails.append(onehot_tail)
-
-        result_1 = torch.tensor(padded_questions, dtype=torch.long)
-        result_2 = torch.tensor(sorted_qa_pairs_len, dtype=torch.long)
-        result_3 = torch.tensor(head_idxs)
-        result_4 = torch.tensor(onehot_tails)
-        # return torch.tensor(padded_questions, dtype=torch.long), torch.tensor(sorted_qa_pairs_len, dtype=torch.long), \
-        #     torch.tensor(head_idxs), torch.tensor(onehot_tails), max_sent_len
-        return [result_1, result_2, result_3, result_4, max_sent_len]
+        return torch.tensor(padded_questions, dtype=torch.long), torch.tensor(sorted_qa_pairs_len, dtype=torch.long), \
+               torch.tensor(head_idxs), torch.tensor(onehot_tails), max_sent_len
 
 
 # ====test and dev dataloader====
@@ -177,25 +170,20 @@ class DEV_MetaQADataSet(Dataset):
         # ==head entity text==
         text_head = qa_pair[0]
         heads_idx = self.entities2idx[text_head]
-
         # ==text question==
         text_q = qa_pair[1]
-        idx_q = [self.word_idx.get(word, 0) for word in text_q.split()]
-
+        idx_q = [self.word_idx[word] for word in text_q.split()]
         # ==tail entity text==
         text_tails = qa_pair[2]
         tails_idx = [self.entities2idx[tail_text] for tail_text in text_tails]
-        onehot_tail = torch.zeros(self.entities_count)
-        onehot_tail.scatter_(0, torch.tensor(tails_idx), 1)
-        return idx_q, heads_idx, onehot_tail, text_q
+        return idx_q, heads_idx, tails_idx, text_q
 
 
 class DEV_MetaQADataLoader(DataLoader):
-    def __init__(self, word_idx, entity_dict_path, relation_dict_path, qa_dataset_path, split=False, batch_size=128,
-                 shuffle=True):
+    def __init__(self, word_idx, entity_dict_path, relation_dict_path, qa_dataset_path, split=False, batch_size=128, shuffle=True):
         dataset = DEV_MetaQADataSet(word_idx, entity_dict_path, relation_dict_path, qa_dataset_path, split)
         super(DEV_MetaQADataLoader, self).__init__(dataset=dataset, batch_size=batch_size, shuffle=shuffle,
-                                                   collate_fn=self._collate_fn)
+                                               collate_fn=self._collate_fn)
 
     @staticmethod
     def _collate_fn(batch_data):
@@ -215,10 +203,5 @@ class DEV_MetaQADataLoader(DataLoader):
             heads_idx.append(head_idx)
             tails_idxs.append(tails_idx)
             text_qs.append(text_q)
-
-        # return values
-        result_1 = torch.tensor(padded_questions, dtype=torch.long)
-        result_2 = torch.tensor(sorted_qa_pairs_len, dtype=torch.long)
-        result_3 = torch.tensor(heads_idx)
-        result_4 = torch.stack(tails_idxs)
-        return result_1, result_2, result_3, result_4, max_sent_len, text_qs
+        return torch.tensor(padded_questions, dtype=torch.long), torch.tensor(sorted_qa_pairs_len, dtype=torch.long), \
+               torch.tensor(heads_idx), tails_idxs, max_sent_len, text_qs

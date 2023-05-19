@@ -178,9 +178,7 @@ class DEV_MetaQADataSet(Dataset):
         # ==tail entity text==
         text_tails = qa_pair[2]
         tails_idx = [self.entities2idx[tail_text] for tail_text in text_tails]
-        onehot_tail = torch.zeros(self.entities_count)
-        onehot_tail.scatter_(0, torch.tensor(tails_idx), 1)
-        return idx_q, heads_idx, onehot_tail
+        return idx_q, heads_idx, tails_idx
 
 
 class DEV_MetaQADataLoader(DataLoader):
@@ -208,4 +206,4 @@ class DEV_MetaQADataLoader(DataLoader):
             tails_idxs.append(tails_idx)
 
         return torch.tensor(padded_questions, dtype=torch.long), torch.tensor(sorted_qa_pairs_len, dtype=torch.long), \
-               torch.tensor(heads_idx), torch.stack(tails_idxs), max_sent_len
+               torch.tensor(heads_idx), tails_idxs, max_sent_len
